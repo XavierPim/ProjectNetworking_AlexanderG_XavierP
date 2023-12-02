@@ -3,39 +3,29 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdnoreturn.h>
 #include <string.h>
 #include <unistd.h>
 
 #define MAX_BUFFER 1024
 #define TENNER 10
 
-void *receive_messages(void *socket);
+void          *receive_messages(void *socket);
+noreturn void *accept_connections(void *server_socket_ptr);
 
 int main(int argc, char const *argv[])
 {
     const char        *peer_ip;
     uint16_t           peer_port;
     int                server_socket;
-    int                client_socket;
+    int                peer_socket;
     struct sockaddr_in server_addr;
-    struct sockaddr_in client_addr;
-    socklen_t          client_addr_len;
+    struct sockaddr_in peer_addr;
     long               port_long;
     char              *endptr;
-    pthread_t          thread_id;
-    int               *new_sock;
-    struct sockaddr_in peer_addr;
-    int                peer_socket;
+    pthread_t          accept_thread;
     char               buffer[MAX_BUFFER];
     int                yes;
-
-    port_long = strtol(argv[2], &endptr, TENNER);    // Base TENNER
-    // Check for errors: e.g., no digits found or value out of range
-    if(endptr == argv[2] || *endptr != '\0' || port_long < 0 || port_long > UINT16_MAX)
-    {
-        fprintf(stderr, "Invalid port number\n");
-        exit(EXIT_FAILURE);
-    }
 
     if(argc != 3)
     {
@@ -43,19 +33,23 @@ int main(int argc, char const *argv[])
         exit(EXIT_FAILURE);
     }
 
-    peer_port       = (uint16_t)port_long;
-    client_addr_len = sizeof(client_addr);
-    peer_ip         = argv[1];
-
-    // Create server socket
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if(server_socket == -1)
+    peer_ip   = argv[1];
+    port_long = strtol(argv[2], &endptr, TENNER);
+    if(endptr == argv[2] || *endptr != '\0' || port_long < 0 || port_long > UINT16_MAX)
     {
-        perror("Server socket creation failed");
+        fprintf(stderr, "Invalid port number\n");
         exit(EXIT_FAILURE);
     }
 
-    // Set the SO_REUSEADDR socket option
+    peer_port = (uint16_t)port_long;
+
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if(server_socket == -1)
+    {
+        perror("Servefghr socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
     yes = 1;
     if(setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
     {
@@ -63,7 +57,6 @@ int main(int argc, char const *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Now proceed to bind the server socket
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family      = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -75,32 +68,17 @@ int main(int argc, char const *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Listen on server socket
     if(listen(server_socket, 1) == -1)
     {
         perror("Listen failed");
         exit(EXIT_FAILURE);
     }
 
-    printf("Waiting for peer connection...\n");
-
-    // Accept client connections in a new thread
-    client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
-    if(client_socket == -1)
+    if(pthread_create(&accept_thread, NULL, accept_connections, &server_socket) != 0)
     {
-        perror("Accept failed");
+        perror("Thread creation for accept_connections failed");
         exit(EXIT_FAILURE);
     }
-
-    new_sock  = (int *)malloc(sizeof(int));
-    *new_sock = client_socket;
-    if(pthread_create(&thread_id, NULL, receive_messages, (void *)new_sock) != 0)
-    {
-        perror("Thread creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    // Connect to peer
 
     peer_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(peer_socket == -1)
@@ -117,28 +95,74 @@ int main(int argc, char const *argv[])
     if(connect(peer_socket, (struct sockaddr *)&peer_addr, sizeof(peer_addr)) == -1)
     {
         perror("Connection to peer failed");
-        exit(EXIT_FAILURE);
+        close(peer_socket);
+        peer_socket = -1;
     }
-
-    printf("Connected to peer. You can start chatting now!\n");
-
-    // Send messages to peer
+    else
+    {
+        printf("Connected to peer. You can start chatting now!\n");
+    }
 
     while(1)
     {
         memset(buffer, 0, sizeof(buffer));
         fgets(buffer, MAX_BUFFER, stdin);
 
-        if(write(peer_socket, buffer, strlen(buffer)) < 0)
+        if(peer_socket != -1 && write(peer_socket, buffer, strlen(buffer)) < 0)
         {
             perror("Write to peer failed");
             break;
         }
     }
 
-    close(peer_socket);
+    if(peer_socket != -1)
+    {
+        close(peer_socket);
+    }
+    pthread_join(accept_thread, NULL);
     close(server_socket);
     return 0;
+}
+
+noreturn void *accept_connections(void *server_socket_ptr)
+{
+    volatile int       connected     = 0;    // Global flag for connection status
+    int                server_socket = *(int *)server_socket_ptr;
+    struct sockaddr_in client_addr;
+    socklen_t          client_addr_len = sizeof(client_addr);
+    int               *new_sock;
+    pthread_t          recv_thread;
+
+    while(!connected)
+    {
+        int client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
+        if(client_socket == -1)
+        {
+            perror("Accept failed");
+            continue;
+        }
+
+        printf("Connection accepted. You can start chatting now!\n");
+        connected = 1;    // Set the connection flag
+
+        new_sock  = (int *)malloc(sizeof(int));
+        *new_sock = client_socket;
+        if(pthread_create(&recv_thread, NULL, receive_messages, (void *)new_sock) != 0)
+        {
+            perror("Thread creation for receive_messages failed");
+            free(new_sock);
+            continue;
+        }
+
+        pthread_detach(recv_thread);
+    }
+
+    // Since this is a noreturn function, you might want to add an infinite loop here
+    // to make sure it doesn't return and conforms to the noreturn attribute
+    while(1)
+    {
+        sleep(1);    // Sleep to prevent busy waiting
+    }
 }
 
 void *receive_messages(void *socket)
@@ -150,12 +174,16 @@ void *receive_messages(void *socket)
     {
         ssize_t bytes_received;
         memset(buffer, 0, sizeof(buffer));
-        bytes_received = read(client_socket, buffer, sizeof(buffer) - 1);    // Declare here
+
+        // Declare bytes_received here, inside the loop
+        bytes_received = read(client_socket, buffer, sizeof(buffer) - 1);
+
         if(bytes_received <= 0)
         {
             perror("Read failed or connection closed");
             break;
         }
+
         printf("Peer: %s\n", buffer);
     }
 
