@@ -3,15 +3,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdnoreturn.h>
 #include <string.h>
 #include <unistd.h>
 
 #define MAX_BUFFER 1024
 #define TENNER 10
 
-void          *receive_messages(void *socket);
-noreturn void *accept_connections(void *server_socket_ptr);
+void *accept_connections(void *server_socket_ptr);
+void *receive_messages(void *socket);
+void *send_messages(void *socket);
 
 int main(int argc, char const *argv[])
 {
@@ -24,8 +24,8 @@ int main(int argc, char const *argv[])
     long               port_long;
     char              *endptr;
     pthread_t          accept_thread;
+    pthread_t          send_thread;
     char               buffer[MAX_BUFFER];
-    int                yes;
 
     if(argc != 3)
     {
@@ -46,14 +46,7 @@ int main(int argc, char const *argv[])
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(server_socket == -1)
     {
-        perror("Servefghr socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    yes = 1;
-    if(setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
-    {
-        perror("setsockopt");
+        perror("Server socket creation failed");
         exit(EXIT_FAILURE);
     }
 
@@ -74,11 +67,9 @@ int main(int argc, char const *argv[])
         exit(EXIT_FAILURE);
     }
 
-    if(pthread_create(&accept_thread, NULL, accept_connections, &server_socket) != 0)
-    {
-        perror("Thread creation for accept_connections failed");
-        exit(EXIT_FAILURE);
-    }
+    printf("Server is waiting for a connection...\n");
+
+    pthread_create(&accept_thread, NULL, accept_connections, &server_socket);
 
     peer_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(peer_socket == -1)
@@ -103,16 +94,21 @@ int main(int argc, char const *argv[])
         printf("Connected to peer. You can start chatting now!\n");
     }
 
+    pthread_create(&send_thread, NULL, send_messages, &peer_socket);
+
     while(1)
     {
+        ssize_t bytes_received;
         memset(buffer, 0, sizeof(buffer));
-        fgets(buffer, MAX_BUFFER, stdin);
+        bytes_received = read(peer_socket, buffer, sizeof(buffer) - 1);
 
-        if(peer_socket != -1 && write(peer_socket, buffer, strlen(buffer)) < 0)
+        if(bytes_received <= 0)
         {
-            perror("Write to peer failed");
+            perror("Read failed or connection closed");
             break;
         }
+
+        printf("Peer: %s\n", buffer);
     }
 
     if(peer_socket != -1)
@@ -124,45 +120,40 @@ int main(int argc, char const *argv[])
     return 0;
 }
 
-noreturn void *accept_connections(void *server_socket_ptr)
+void *accept_connections(void *server_socket_ptr)
 {
-    volatile int       connected     = 0;    // Global flag for connection status
     int                server_socket = *(int *)server_socket_ptr;
     struct sockaddr_in client_addr;
     socklen_t          client_addr_len = sizeof(client_addr);
-    int               *new_sock;
+    int                new_sock;
     pthread_t          recv_thread;
 
-    while(!connected)
+    new_sock = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
+    if(new_sock == -1)
     {
-        int client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
-        if(client_socket == -1)
-        {
-            perror("Accept failed");
-            continue;
-        }
-
-        printf("Connection accepted. You can start chatting now!\n");
-        connected = 1;    // Set the connection flag
-
-        new_sock  = (int *)malloc(sizeof(int));
-        *new_sock = client_socket;
-        if(pthread_create(&recv_thread, NULL, receive_messages, (void *)new_sock) != 0)
-        {
-            perror("Thread creation for receive_messages failed");
-            free(new_sock);
-            continue;
-        }
-
-        pthread_detach(recv_thread);
+        perror("Accept failed");
+        exit(EXIT_FAILURE);
     }
 
-    // Since this is a noreturn function, you might want to add an infinite loop here
-    // to make sure it doesn't return and conforms to the noreturn attribute
+    printf("Connection accepted. You can start chatting now!\n");
+
+    pthread_create(&recv_thread, NULL, receive_messages, &new_sock);
+    pthread_detach(recv_thread);
+
     while(1)
     {
-        sleep(1);    // Sleep to prevent busy waiting
+        char buffer[MAX_BUFFER];
+        memset(buffer, 0, sizeof(buffer));
+        fgets(buffer, MAX_BUFFER, stdin);
+
+        if(write(new_sock, buffer, strlen(buffer)) < 0)
+        {
+            perror("Write to peer failed");
+            break;
+        }
     }
+    close(new_sock);
+    return NULL;
 }
 
 void *receive_messages(void *socket)
@@ -175,7 +166,6 @@ void *receive_messages(void *socket)
         ssize_t bytes_received;
         memset(buffer, 0, sizeof(buffer));
 
-        // Declare bytes_received here, inside the loop
         bytes_received = read(client_socket, buffer, sizeof(buffer) - 1);
 
         if(bytes_received <= 0)
@@ -188,6 +178,32 @@ void *receive_messages(void *socket)
     }
 
     close(client_socket);
-    free(socket);
+    return NULL;
+}
+
+void *send_messages(void *socket)
+{
+    int  peer_socket = *(int *)socket;
+    char buffer[MAX_BUFFER];
+
+    while(1)
+    {
+        ssize_t bytes_received;
+        memset(buffer, 0, sizeof(buffer));
+        bytes_received = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+
+        if(bytes_received <= 0)
+        {
+            perror("Read from stdin failed");
+            break;
+        }
+
+        if(write(peer_socket, buffer, strlen(buffer)) < 0)
+        {
+            perror("Write to peer failed");
+            break;
+        }
+    }
+
     return NULL;
 }
