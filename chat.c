@@ -165,7 +165,7 @@ void *receive_messages(void *socket_ptr)
     return NULL;
 }
 
-void *send_messages(void *socket)
+_Noreturn void *send_messages(void *socket)
 {
     int  peer_socket = *(int *)socket;
     char buffer[MAX_BUFFER];
@@ -209,5 +209,5 @@ void *send_messages(void *socket)
     }
 
     close(peer_socket);
-    return NULL;
+    exit(EXIT_SUCCESS);
 }
