@@ -105,6 +105,7 @@ int main(int argc, char const *argv[])
     }
 
     close(server_socket);    // Close the server socket
+
     return 0;
 }
 
@@ -171,9 +172,15 @@ void *send_messages(void *socket)
     char buffer[MAX_BUFFER];
     int  isInteractive = isatty(STDIN_FILENO);
 
-    if(isInteractive)
+    FILE *input_file = stdin;    // By default, read from stdin
+
+    if(!isInteractive)
     {
-        printf("Enter message (or type 'quit' to exit):\n ");
+        // Check if input is redirected from a file
+        if(fileno(stdin) != STDIN_FILENO)
+        {
+            input_file = stdin;    // Input is redirected from a file
+        }
     }
 
     while(1)
@@ -182,14 +189,15 @@ void *send_messages(void *socket)
         // Ensure the prompt is printed immediately when in interactive mode
         if(isInteractive)
         {
+            printf("Enter message (or type 'quit' to exit):\n ");
             fflush(stdout);
         }
 
-        if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
+        if(fgets(buffer, MAX_BUFFER, input_file) == NULL)
         {
-            if(feof(stdin))
+            if(feof(input_file))
             {
-                // EOF reached (Ctrl+D pressed)
+                // EOF reached (Ctrl+D pressed or end of file)
                 printf("\nEOF reached. Exiting.\n");
                 break;
             }
