@@ -25,7 +25,6 @@ int main(int argc, char const *argv[])
     char              *endptr;
     pthread_t          accept_thread;
     pthread_t          send_thread;
-    char               buffer[MAX_BUFFER];
 
     if(argc != 3)
     {
@@ -96,21 +95,6 @@ int main(int argc, char const *argv[])
 
     pthread_create(&send_thread, NULL, send_messages, &peer_socket);
 
-    while(1)
-    {
-        ssize_t bytes_received;
-        memset(buffer, 0, sizeof(buffer));
-        bytes_received = read(peer_socket, buffer, sizeof(buffer) - 1);
-
-        if(bytes_received <= 0)
-        {
-            perror("Read failed or connection closed");
-            break;
-        }
-
-        printf("Peer: %s\n", buffer);
-    }
-
     if(peer_socket != -1)
     {
         close(peer_socket);
@@ -122,50 +106,49 @@ int main(int argc, char const *argv[])
 
 void *accept_connections(void *server_socket_ptr)
 {
-    int                server_socket = *(int *)server_socket_ptr;
+    int                server_socket;
     struct sockaddr_in client_addr;
-    socklen_t          client_addr_len = sizeof(client_addr);
-    int                new_sock;
+    socklen_t          client_addr_len;
+    int               *sock_ptr;
     pthread_t          recv_thread;
 
-    new_sock = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
-    if(new_sock == -1)
-    {
-        perror("Accept failed");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Connection accepted. You can start chatting now!\n");
-
-    pthread_create(&recv_thread, NULL, receive_messages, &new_sock);
-    pthread_detach(recv_thread);
+    server_socket   = *(int *)server_socket_ptr;
+    client_addr_len = sizeof(client_addr);
 
     while(1)
     {
-        char buffer[MAX_BUFFER];
-        memset(buffer, 0, sizeof(buffer));
-        fgets(buffer, MAX_BUFFER, stdin);
-
-        if(write(new_sock, buffer, strlen(buffer)) < 0)
+        sock_ptr = (int *)malloc(sizeof(int));    // Explicitly cast the result of malloc
+        if(sock_ptr == NULL)
         {
-            perror("Write to peer failed");
-            break;
+            perror("Memory allocation failed");
+            continue;    // Handle memory allocation failure
         }
+
+        *sock_ptr = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
+        if(*sock_ptr == -1)
+        {
+            free(sock_ptr);    // Free the allocated memory in case of accept failure
+            perror("Accept failed");
+            continue;
+        }
+
+        printf("Connection accepted. You can start chatting now!\n");
+        pthread_create(&recv_thread, NULL, receive_messages, sock_ptr);
+        pthread_detach(recv_thread);
     }
-    close(new_sock);
-    return NULL;
+    // No return in an infinite loop
 }
 
-void *receive_messages(void *socket)
+void *receive_messages(void *socket_ptr)
 {
-    int  client_socket = *(int *)socket;
+    int *client_socket_ptr = (int *)socket_ptr;
+    int  client_socket     = *client_socket_ptr;
     char buffer[MAX_BUFFER];
 
     while(1)
     {
         ssize_t bytes_received;
         memset(buffer, 0, sizeof(buffer));
-
         bytes_received = read(client_socket, buffer, sizeof(buffer) - 1);
 
         if(bytes_received <= 0)
@@ -177,7 +160,8 @@ void *receive_messages(void *socket)
         printf("Peer: %s\n", buffer);
     }
 
-    close(client_socket);
+    close(client_socket);       // Close the socket
+    free(client_socket_ptr);    // Free the allocated memory using delete
     return NULL;
 }
 
@@ -192,7 +176,6 @@ void *send_messages(void *socket)
         memset(buffer, 0, sizeof(buffer));
         if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
         {
-            // Handle Ctrl+D (EOF)
             printf("You have chosen to quit. Goodbye!\n");
             close(peer_socket);    // Close the peer socket before exiting
             exit(EXIT_SUCCESS);
