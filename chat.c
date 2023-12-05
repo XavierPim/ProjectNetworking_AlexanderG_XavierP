@@ -191,6 +191,11 @@ void *send_messages(void *socket)
         ssize_t bytes_received;
         memset(buffer, 0, sizeof(buffer));
         bytes_received = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+        if (strcmp(buffer, "quit\n") == 0)
+        {
+            printf("You have chosen to quit. Goodbye!\n");
+            break; // Exit the loop and the function without closing the socket
+        }
 
         if(bytes_received <= 0)
         {
