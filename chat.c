@@ -188,27 +188,31 @@ void *send_messages(void *socket)
 
     while(1)
     {
-        ssize_t bytes_received;
+        ssize_t bytes_sent;
         memset(buffer, 0, sizeof(buffer));
-        bytes_received = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
-        if (strcmp(buffer, "quit\n") == 0)
+        if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
+        {
+            // Handle Ctrl+D (EOF)
+            printf("You have chosen to quit. Goodbye!\n");
+            close(peer_socket);    // Close the peer socket before exiting
+            exit(EXIT_SUCCESS);
+        }
+
+        if(strcmp(buffer, "quit\n") == 0)
         {
             printf("You have chosen to quit. Goodbye!\n");
-            break; // Exit the loop and the function without closing the socket
+            close(peer_socket);    // Close the peer socket before exiting
+            exit(EXIT_SUCCESS);
         }
 
-        if(bytes_received <= 0)
-        {
-            perror("Read from stdin failed");
-            break;
-        }
-
-        if(write(peer_socket, buffer, strlen(buffer)) < 0)
+        bytes_sent = write(peer_socket, buffer, strlen(buffer));
+        if(bytes_sent < 0)
         {
             perror("Write to peer failed");
             break;
         }
     }
 
+    close(peer_socket);    // Close the peer socket when done
     return NULL;
 }
