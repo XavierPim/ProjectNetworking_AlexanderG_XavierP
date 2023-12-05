@@ -165,21 +165,24 @@ void *receive_messages(void *socket_ptr)
     return NULL;
 }
 
-_Noreturn void *send_messages(void *socket)
+void *send_messages(void *socket)
 {
     int  peer_socket = *(int *)socket;
     char buffer[MAX_BUFFER];
-    int  isInteractive;
+    int  isInteractive = isatty(STDIN_FILENO);
 
-    isInteractive = isatty(STDIN_FILENO);
-    printf("Enter message (or type 'quit' to exit):\n ");
+    if(isInteractive)
+    {
+        printf("Enter message (or type 'quit' to exit):\n ");
+    }
 
     while(1)
     {
         ssize_t bytes_sent;
+        // Ensure the prompt is printed immediately when in interactive mode
         if(isInteractive)
         {
-            fflush(stdout);    // Ensure prompt is printed immediately
+            fflush(stdout);
         }
 
         if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
@@ -208,6 +211,7 @@ _Noreturn void *send_messages(void *socket)
         }
     }
 
+    // Close the socket before exiting
     close(peer_socket);
-    exit(EXIT_SUCCESS);
+    return NULL;
 }
