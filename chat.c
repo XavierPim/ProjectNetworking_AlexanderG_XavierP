@@ -8,6 +8,7 @@
 
 #define MAX_BUFFER 1024
 #define TENNER 10
+#define FIVER 5
 
 _Noreturn void *accept_connections(void *server_socket_ptr);
 
@@ -140,11 +141,10 @@ _Noreturn void *accept_connections(void *server_socket_ptr)
 
 void *receive_messages(void *socket_ptr)
 {
-    int *client_socket_ptr = (int *)socket_ptr;
-    int  client_socket;
     char buffer[MAX_BUFFER];
-    client_socket = *client_socket_ptr;
-    free(client_socket_ptr);    // Free the dynamically allocated memory
+    int  client_socket = *(int *)socket_ptr;
+    free(socket_ptr);    // Free the dynamically allocated memory
+    // Free the dynamically allocated memory
 
     while(1)
     {
@@ -169,23 +169,35 @@ void *send_messages(void *socket)
 {
     int  peer_socket = *(int *)socket;
     char buffer[MAX_BUFFER];
+    int  isInteractive;
+
+    isInteractive = isatty(STDIN_FILENO);
+    printf("Enter message (or type 'quit' to exit):\n ");
 
     while(1)
     {
         ssize_t bytes_sent;
-        memset(buffer, 0, sizeof(buffer));
-        if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
+        if(isInteractive)
         {
-            printf("You have chosen to quit. Goodbye!\n");
-            close(peer_socket);    // Close the peer socket before exiting
-            exit(EXIT_SUCCESS);
+            fflush(stdout);    // Ensure prompt is printed immediately
         }
 
-        if(strcmp(buffer, "quit\n") == 0)
+        if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
+        {
+            if(feof(stdin))
+            {
+                // EOF reached (Ctrl+D pressed)
+                printf("\nEOF reached. Exiting.\n");
+                break;
+            }
+            perror("Error reading input");
+            break;
+        }
+
+        if(strncmp(buffer, "quit\n", FIVER) == 0)
         {
             printf("You have chosen to quit. Goodbye!\n");
-            close(peer_socket);    // Close the peer socket before exiting
-            exit(EXIT_SUCCESS);
+            break;
         }
 
         bytes_sent = write(peer_socket, buffer, strlen(buffer));
@@ -196,6 +208,6 @@ void *send_messages(void *socket)
         }
     }
 
-    close(peer_socket);    // Close the peer socket when done
+    close(peer_socket);
     return NULL;
 }
