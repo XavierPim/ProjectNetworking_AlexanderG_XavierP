@@ -9,8 +9,10 @@
 #define MAX_BUFFER 1024
 #define TENNER 10
 
-void *accept_connections(void *server_socket_ptr);
+_Noreturn void *accept_connections(void *server_socket_ptr);
+
 void *receive_messages(void *socket);
+
 void *send_messages(void *socket);
 
 int main(int argc, char const *argv[])
@@ -67,7 +69,6 @@ int main(int argc, char const *argv[])
     }
 
     printf("Server is waiting for a connection...\n");
-
     pthread_create(&accept_thread, NULL, accept_connections, &server_socket);
 
     peer_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -95,55 +96,55 @@ int main(int argc, char const *argv[])
 
     pthread_create(&send_thread, NULL, send_messages, &peer_socket);
 
+    // Thread joining
+    pthread_join(accept_thread, NULL);    // Wait for accept_thread to finish
     if(peer_socket != -1)
     {
-        close(peer_socket);
+        pthread_join(send_thread, NULL);    // Wait for send_thread to finish
     }
-    pthread_join(accept_thread, NULL);
-    close(server_socket);
+
+    close(server_socket);    // Close the server socket
     return 0;
 }
 
-void *accept_connections(void *server_socket_ptr)
+_Noreturn void *accept_connections(void *server_socket_ptr)
 {
-    int                server_socket;
+    int                server_socket = *(int *)server_socket_ptr;
     struct sockaddr_in client_addr;
     socklen_t          client_addr_len;
-    int               *sock_ptr;
     pthread_t          recv_thread;
-
-    server_socket   = *(int *)server_socket_ptr;
     client_addr_len = sizeof(client_addr);
 
     while(1)
     {
-        sock_ptr = (int *)malloc(sizeof(int));    // Explicitly cast the result of malloc
-        if(sock_ptr == NULL)
+        int *new_sock_ptr = (int *)malloc(sizeof(int));    // Explicitly cast the result of malloc
+        if(new_sock_ptr == NULL)
         {
             perror("Memory allocation failed");
             continue;    // Handle memory allocation failure
         }
 
-        *sock_ptr = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
-        if(*sock_ptr == -1)
+        *new_sock_ptr = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
+        if(*new_sock_ptr == -1)
         {
-            free(sock_ptr);    // Free the allocated memory in case of accept failure
+            free(new_sock_ptr);    // Free the allocated memory in case of accept failure
             perror("Accept failed");
             continue;
         }
 
         printf("Connection accepted. You can start chatting now!\n");
-        pthread_create(&recv_thread, NULL, receive_messages, sock_ptr);
+        pthread_create(&recv_thread, NULL, receive_messages, new_sock_ptr);
         pthread_detach(recv_thread);
     }
-    // No return in an infinite loop
 }
 
 void *receive_messages(void *socket_ptr)
 {
     int *client_socket_ptr = (int *)socket_ptr;
-    int  client_socket     = *client_socket_ptr;
+    int  client_socket;
     char buffer[MAX_BUFFER];
+    client_socket = *client_socket_ptr;
+    free(client_socket_ptr);    // Free the dynamically allocated memory
 
     while(1)
     {
@@ -160,8 +161,7 @@ void *receive_messages(void *socket_ptr)
         printf("Peer: %s\n", buffer);
     }
 
-    close(client_socket);       // Close the socket
-    free(client_socket_ptr);    // Free the allocated memory using delete
+    close(client_socket);    // Close the socket
     return NULL;
 }
 
