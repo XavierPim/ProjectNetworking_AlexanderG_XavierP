@@ -10,11 +10,9 @@
 #define TENNER 10
 #define FIVER 5
 
+// Function prototypes
 _Noreturn void *accept_connections(void *server_socket_ptr);
-
-void *receive_messages(void *socket);
-
-void *send_messages(void *socket);
+void           *handle_peer_connection(void *socket_ptr);
 
 int main(int argc, char const *argv[])
 {
@@ -27,7 +25,6 @@ int main(int argc, char const *argv[])
     long               port_long;
     char              *endptr;
     pthread_t          accept_thread;
-    pthread_t          send_thread;
 
     if(argc != 3)
     {
@@ -42,7 +39,6 @@ int main(int argc, char const *argv[])
         fprintf(stderr, "Invalid port number\n");
         exit(EXIT_FAILURE);
     }
-
     peer_port = (uint16_t)port_long;
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -72,6 +68,7 @@ int main(int argc, char const *argv[])
     printf("Server is waiting for a connection...\n");
     pthread_create(&accept_thread, NULL, accept_connections, &server_socket);
 
+    // Client socket setup
     peer_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(peer_socket == -1)
     {
@@ -87,25 +84,27 @@ int main(int argc, char const *argv[])
     if(connect(peer_socket, (struct sockaddr *)&peer_addr, sizeof(peer_addr)) == -1)
     {
         perror("Connection to peer failed");
-        close(peer_socket);
-        peer_socket = -1;
+        close(peer_socket);    // Close the socket as connection failed
     }
     else
     {
+        pthread_t client_thread;
+        int      *client_sock_ptr;
         printf("Connected to peer. You can start chatting now!\n");
+        client_sock_ptr = (int *)malloc(sizeof(int));
+        if(client_sock_ptr == NULL)
+        {
+            perror("Memory allocation failed");
+            exit(EXIT_FAILURE);
+        }
+        *client_sock_ptr = peer_socket;
+
+        pthread_create(&client_thread, NULL, handle_peer_connection, client_sock_ptr);
+        pthread_join(client_thread, NULL);
     }
 
-    pthread_create(&send_thread, NULL, send_messages, &peer_socket);
-
-    // Thread joining
-    pthread_join(accept_thread, NULL);    // Wait for accept_thread to finish
-    if(peer_socket != -1)
-    {
-        pthread_join(send_thread, NULL);    // Wait for send_thread to finish
-    }
-
-    close(server_socket);    // Close the server socket
-
+    pthread_join(accept_thread, NULL);
+    close(server_socket);
     return 0;
 }
 
@@ -113,113 +112,76 @@ _Noreturn void *accept_connections(void *server_socket_ptr)
 {
     int                server_socket = *(int *)server_socket_ptr;
     struct sockaddr_in client_addr;
-    socklen_t          client_addr_len;
-    pthread_t          recv_thread;
-    client_addr_len = sizeof(client_addr);
+    socklen_t          client_addr_len = sizeof(client_addr);
 
     while(1)
     {
-        int *new_sock_ptr = (int *)malloc(sizeof(int));    // Explicitly cast the result of malloc
+        int      *new_sock_ptr = (int *)malloc(sizeof(int));
+        pthread_t thread_id;
         if(new_sock_ptr == NULL)
         {
             perror("Memory allocation failed");
-            continue;    // Handle memory allocation failure
+            continue;
         }
 
         *new_sock_ptr = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
         if(*new_sock_ptr == -1)
         {
-            free(new_sock_ptr);    // Free the allocated memory in case of accept failure
+            free(new_sock_ptr);
             perror("Accept failed");
             continue;
         }
 
         printf("Connection accepted. You can start chatting now!\n");
-        pthread_create(&recv_thread, NULL, receive_messages, new_sock_ptr);
-        pthread_detach(recv_thread);
+
+        pthread_create(&thread_id, NULL, handle_peer_connection, new_sock_ptr);
+        pthread_detach(thread_id);
     }
 }
 
-void *receive_messages(void *socket_ptr)
+void *handle_peer_connection(void *socket_ptr)
 {
+    int  sock = *(int *)socket_ptr;
     char buffer[MAX_BUFFER];
-    int  client_socket = *(int *)socket_ptr;
-    free(socket_ptr);    // Free the dynamically allocated memory
-    // Free the dynamically allocated memory
+    free(socket_ptr);
 
     while(1)
     {
         ssize_t bytes_received;
-        memset(buffer, 0, sizeof(buffer));
-        bytes_received = read(client_socket, buffer, sizeof(buffer) - 1);
-
+        memset(buffer, 0, MAX_BUFFER);
+        bytes_received = read(sock, buffer, MAX_BUFFER - 1);
         if(bytes_received <= 0)
         {
-            perror("Read failed or connection closed");
+            if(bytes_received == 0)
+            {
+                printf("Peer disconnected.\n");
+            }
+            else
+            {
+                perror("Read error");
+            }
             break;
         }
-
         printf("Peer: %s\n", buffer);
-    }
 
-    close(client_socket);    // Close the socket
-    return NULL;
-}
-
-void *send_messages(void *socket)
-{
-    int  peer_socket = *(int *)socket;
-    char buffer[MAX_BUFFER];
-    int  isInteractive = isatty(STDIN_FILENO);
-
-    FILE *input_file = stdin;    // By default, read from stdin
-
-    if(!isInteractive)
-    {
-        // Check if input is redirected from a file
-        if(fileno(stdin) != STDIN_FILENO)
+        printf("Enter message (or type 'quit' to exit):\n");
+        if(fgets(buffer, MAX_BUFFER, stdin) == NULL)
         {
-            input_file = stdin;    // Input is redirected from a file
-        }
-    }
-
-    while(1)
-    {
-        ssize_t bytes_sent;
-        // Ensure the prompt is printed immediately when in interactive mode
-        if(isInteractive)
-        {
-            printf("Enter message (or type 'quit' to exit):\n ");
-            fflush(stdout);
-        }
-
-        if(fgets(buffer, MAX_BUFFER, input_file) == NULL)
-        {
-            if(feof(input_file))
-            {
-                // EOF reached (Ctrl+D pressed or end of file)
-                printf("\nEOF reached. Exiting.\n");
-                break;
-            }
             perror("Error reading input");
             break;
         }
-
         if(strncmp(buffer, "quit\n", FIVER) == 0)
         {
-            printf("You have chosen to quit. Goodbye!\n");
+            printf("Quitting. Goodbye!\n");
             break;
         }
-
-        bytes_sent = write(peer_socket, buffer, strlen(buffer));
-        if(bytes_sent < 0)
+        if(write(sock, buffer, strlen(buffer)) < 0)
         {
-            perror("Write to peer failed");
+            perror("Write error");
             break;
         }
     }
 
-    // Close the socket before exiting
-    close(peer_socket);
+    close(sock);
     return NULL;
 }
