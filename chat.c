@@ -181,6 +181,7 @@ void *send_messages(void *socket)
         {
             input_file = stdin;    // Input is redirected from a file
         }
+        printf("Enter message (or type 'quit' to exit):\n ");
     }
 
     while(1)
@@ -189,7 +190,6 @@ void *send_messages(void *socket)
         // Ensure the prompt is printed immediately when in interactive mode
         if(isInteractive)
         {
-            printf("Enter message (or type 'quit' to exit):\n ");
             fflush(stdout);
         }
 
@@ -199,7 +199,9 @@ void *send_messages(void *socket)
             {
                 // EOF reached (Ctrl+D pressed or end of file)
                 printf("\nEOF reached. Exiting.\n");
-                break;
+
+                close(peer_socket);
+                exit(EXIT_SUCCESS)
             }
             perror("Error reading input");
             break;
@@ -208,7 +210,8 @@ void *send_messages(void *socket)
         if(strncmp(buffer, "quit\n", FIVER) == 0)
         {
             printf("You have chosen to quit. Goodbye!\n");
-            break;
+            close(peer_socket);
+            exit(EXIT_SUCCESS)
         }
 
         bytes_sent = write(peer_socket, buffer, strlen(buffer));
